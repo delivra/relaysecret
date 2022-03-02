@@ -39,7 +39,7 @@ resource "aws_cloudfront_distribution" "s3_distribution" {
   }
 
   viewer_certificate {
-    acm_certificate_arn = module.acm_request_certificate.arn
+    acm_certificate_arn = aws_acm_certificate.cert.arn
     ssl_support_method = "sni-only"
     minimum_protocol_version = "TLSv1.2_2019"
   }
@@ -57,31 +57,12 @@ provider "aws" {
   alias = "east1"
 }
 
-module "acm_request_certificate" {
-  source = "cloudposse/acm-request-certificate/aws"
-  version = "0.16.0"
-
-  domain_name = var.domain
-
-  // Assuming a single level sub of main domain
-  zone_name = replace(var.domain, "/^[^.]+\\./" , "")
-
-  # Only certificates generate & store in us-east-1 can be loaded into cloudfront.
-  providers = {
-    aws = aws.east1
+// If we are using ACM certificate for Cloudfront, only certificates generate & store in us-east-1 can be loaded into cloudfront.
+resource "aws_acm_certificate" "cert" {
+  domain_name       = var.domain
+  validation_method = "DNS"
+  lifecycle {
+    create_before_destroy = true
   }
-}
-
-data "aws_route53_zone" "cloudfront" {
-  name         = "${replace(var.domain, "/^[^.]+\\./" , "")}."
-  private_zone = false
-}
-
-resource "aws_route53_record" "cloudfront" {
-  name    = replace(var.domain, "/\\..*$/", "")
-  type    = "CNAME"
-  zone_id = data.aws_route53_zone.cloudfront.zone_id
-  ttl     = 14400
-
-  records = ["${aws_cloudfront_distribution.s3_distribution.domain_name}."]
+  provider = aws.east1
 }

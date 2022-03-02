@@ -9,7 +9,7 @@ import json
 import re
 import datetime
 import urllib.request
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, parse_qs
 from botocore.client import Config
 import hmac
 import hashlib
@@ -42,6 +42,7 @@ class Clock:
         return time.time()
 
 
+# From https://github.com/slackapi/python-slack-sdk/blob/2a4487c81fa95d1cb07a3d916887ac10d67d79ab/slack/signature/verifier.py
 class SignatureVerifier:
     def __init__(self, signing_secret: str, clock: Clock = Clock()):
         """Slack request signature verifier
@@ -127,9 +128,20 @@ def getshareurl(event):
         print(f"Received event with bad signature:\n{event}")
         raise Exception('Bad signature')
 
+    # Extract custom expiration from text (if specified)
+    expiredays = 1
+    expiredaysmatch = re.search('^\s*(?P<expiredays>[1-9][0-9]?)\s*$', parse_qs(body).get('text', [''])[0])
+    if expiredaysmatch:
+        expiredays = int(expiredaysmatch.group('expiredays'))
+
+    # Set limits
+    if expiredays > 10:
+        expiredays = 10
+    if expiredays < 1:
+        expiredays = 1
+
     # Generate signed url
     key = hmacsecret.encode('utf-8')
-    expiredays = 1
     exp = int(datetime.datetime.now().timestamp() + 3600 * 24 * expiredays)
     data = str(exp).encode('utf-8')
     sig = hmac.new(key=key, msg=data, digestmod=hashlib.sha256).hexdigest().lower()
@@ -333,26 +345,3 @@ def app_handler(event, context):
         "headers": headers,
         "body"  : json.dumps(body)
     }
-from pprint import pprint
-# Our debug main - We use this to test things locally as it's not used by lambda function.
-if __name__ == '__main__':
-    ### Form a POST curl request that would let me upload an image to relaysecret bucket.
-    # try:
-    #     expiretime=int(sys.argv[1])
-    # except:
-    #     expiretime=5
-    # print(expiretime)
-    # resp=getposturl(expiretime)
-    # print (resp)
-    # resp['fields']['file'] = '@{key}'.format(key="kb.jpg")
-    # form_values = "  ".join(["-F {key}={value} ".format(key=key, value=value)
-    #                     for key, value in resp['fields'].items()])
-    # # Construct a curl command to upload an image kb.jpg file to S3 :)
-    # print('curl command: \n')
-    # print('curl -v {form_values} {url}'.format(form_values=form_values, url=resp['url']))
-    print (getobj("1day/fc11258631342f88470638a8a30a076777ac2683882b13f37c0a2c361eb84279"))
-    # print('')
-
-    # Check Sha1 for eicar file.
-    # print(json.dumps(checkvirus("3395856ce81f2b7382dee72602f798b642f14140")))
-
