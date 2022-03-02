@@ -1,24 +1,33 @@
+locals {
+  extraenvar = {
+    "BUCKETNAME" = aws_s3_bucket.bucket.id
+    "BUCKETNAME_AU" = aws_s3_bucket.bucket_auregion.id
+    "BUCKETNAME_EU" = aws_s3_bucket.bucket_euregion.id
+    "MULTIREGION"   = "true"
+    "SEED"       = "relaysecret-${var.deploymentname}"
+  }
+}
+
+data "archive_file" "relaysecret" {
+  source_file = "${path.module}/code/relaysecret.py"
+  type = "zip"
+  output_path = "${path.module}/code/relaysecret.zip"
+}
+
 // relaysecret lambda function
 resource "aws_lambda_function" "relaysecret" {
   function_name = "relaysecret-${var.deploymentname}-function"
 
-  filename         = var.relaysecretfile
-  source_code_hash = filebase64sha256(var.relaysecretfile)
+  filename         = data.archive_file.relaysecret.output_path
+  source_code_hash = filebase64sha256(data.archive_file.relaysecret.output_path)
 
-  handler = var.relaysecrethandler
+  handler = "relaysecret.app_handler"
   runtime = "python3.8"
   timeout = 20
   role    = aws_iam_role.relaysecret.arn
 
   environment {
-    variables = merge(var.envvar,local.extraenvar)
-  }
-}
-
-locals {
-  extraenvar = {
-    "BUCKETNAME" = aws_s3_bucket.bucket.id
-    "SEED"       = "relaysecret-${var.deploymentname}"
+    variables = merge(var.envvar, local.extraenvar)
   }
 }
 
@@ -37,7 +46,6 @@ resource "aws_lambda_permission" "apigw_lambda" {
 
   // More: http://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-control-access-using-iam-policies-to-invoke-api.html
   source_arn = "${aws_api_gateway_deployment.relaysecret.execution_arn}/*/*"
-  /*--*/
 }
 
 resource "aws_api_gateway_rest_api" "relaysecret" {
@@ -53,6 +61,12 @@ resource "aws_api_gateway_resource" "proxy" {
   path_part   = "{proxy+}"
 }
 
+resource "aws_api_gateway_resource" "slack" {
+  rest_api_id = aws_api_gateway_rest_api.relaysecret.id
+  parent_id   = aws_api_gateway_rest_api.relaysecret.root_resource_id
+  path_part   = "slack"
+}
+
 // Gateway method set to ANY for the proxy wildcard above.. we want our relaysecret to handle all requests
 resource "aws_api_gateway_method" "proxy" {
   rest_api_id   = aws_api_gateway_rest_api.relaysecret.id
@@ -61,12 +75,29 @@ resource "aws_api_gateway_method" "proxy" {
   authorization = "NONE"
 }
 
-// Trigger lambda immediately, lambda handler needs to handle requestContext from 
+resource "aws_api_gateway_method" "slack" {
+  rest_api_id   = aws_api_gateway_rest_api.relaysecret.id
+  resource_id   = aws_api_gateway_resource.slack.id
+  http_method   = "POST"
+  authorization = "NONE"
+}
+
+// Trigger lambda immediately, lambda handler needs to handle requestContext from
 // https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html
 resource "aws_api_gateway_integration" "proxy_to_lambda" {
   rest_api_id = aws_api_gateway_rest_api.relaysecret.id
   resource_id = aws_api_gateway_method.proxy.resource_id
   http_method = aws_api_gateway_method.proxy.http_method
+  # Lambda functions can only be invoked via HTTP POST - https://amzn.to/2owMYNh
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.relaysecret.invoke_arn
+}
+
+resource "aws_api_gateway_integration" "proxy_slack_to_lambda" {
+  rest_api_id = aws_api_gateway_rest_api.relaysecret.id
+  resource_id = aws_api_gateway_method.slack.resource_id
+  http_method = aws_api_gateway_method.slack.http_method
   # Lambda functions can only be invoked via HTTP POST - https://amzn.to/2owMYNh
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
@@ -81,7 +112,7 @@ resource "aws_api_gateway_method" "proxy_root" {
   authorization = "NONE"
 }
 
-// Trigger lambda immediately, lambda handler needs to handle requestContext from 
+// Trigger lambda immediately, lambda handler needs to handle requestContext from
 // https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html
 resource "aws_api_gateway_integration" "proxy_root_to_lambda" {
   rest_api_id = aws_api_gateway_rest_api.relaysecret.id
@@ -93,12 +124,24 @@ resource "aws_api_gateway_integration" "proxy_root_to_lambda" {
   uri                     = aws_lambda_function.relaysecret.invoke_arn
 }
 
-
 resource "aws_api_gateway_deployment" "relaysecret" {
   depends_on = [
     aws_api_gateway_integration.proxy_to_lambda,
     aws_api_gateway_integration.proxy_root_to_lambda,
   ]
+
+  triggers = {
+    redeployment = sha1(jsonencode([
+      aws_api_gateway_resource.proxy.id,
+      aws_api_gateway_resource.slack.id,
+      aws_api_gateway_method.proxy.id,
+      aws_api_gateway_method.slack.id,
+      aws_api_gateway_method.proxy_root.id,
+      aws_api_gateway_integration.proxy_to_lambda.id,
+      aws_api_gateway_integration.proxy_slack_to_lambda.id,
+      aws_api_gateway_integration.proxy_root_to_lambda.id,
+    ]))
+  }
 
   rest_api_id = aws_api_gateway_rest_api.relaysecret.id
   stage_name  = "alpha"

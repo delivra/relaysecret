@@ -36,7 +36,11 @@ data "aws_iam_policy_document" "relaysecret" {
     ]
     resources = [
         "${aws_s3_bucket.bucket.arn}",
-        "${aws_s3_bucket.bucket.arn}/*"
+        "${aws_s3_bucket.bucket.arn}/*",
+        "${aws_s3_bucket.bucket_auregion.arn}",
+        "${aws_s3_bucket.bucket_auregion.arn}/*",
+        "${aws_s3_bucket.bucket_euregion.arn}",
+        "${aws_s3_bucket.bucket_euregion.arn}/*"
     ]
   }
   // Allow lambda function to create loggroup and push its execution log

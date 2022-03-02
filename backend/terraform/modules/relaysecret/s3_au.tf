@@ -1,7 +1,13 @@
 
+provider "aws" {
+  alias               = "auregion"
+  region              = "ap-southeast-2"
+}
+
 // This is our bucket for storing data. Access is set to private and leveraging lifecycle rules, we can expire our objects base on their prefix.
-resource "aws_s3_bucket" "bucket" {
-  bucket = "relaysecret-${var.deploymentname}"
+resource "aws_s3_bucket" "bucket_auregion" {
+  provider = aws.auregion
+  bucket = "relaysecret-${var.deploymentname}-auregion"
   acl    = "private"
 
   lifecycle_rule {
@@ -74,7 +80,7 @@ resource "aws_s3_bucket" "bucket" {
     max_age_seconds = 3000
   }
 
-   server_side_encryption_configuration {
+  server_side_encryption_configuration {
     rule {
       apply_server_side_encryption_by_default {
         sse_algorithm     = "AES256"
@@ -84,8 +90,9 @@ resource "aws_s3_bucket" "bucket" {
 
 }
 
-resource "aws_s3_bucket_public_access_block" "bucket" {
-  bucket                  = aws_s3_bucket.bucket.id
+resource "aws_s3_bucket_public_access_block" "bucket_auregion" {
+  provider = aws.auregion
+  bucket                  = aws_s3_bucket.bucket_auregion.id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true

@@ -1,6 +1,6 @@
-variable "deploymentname" {}
-variable "relaysecretfile" {}
-variable "relaysecrethandler" {}
+variable "deploymentname" {
+  type = string
+}
 
 variable "envvar" {
   type    = map(string)
